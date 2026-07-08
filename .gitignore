@@ -1,0 +1,47 @@
+# ========== C++ 编译中间产物 ==========
+*.o
+*.out
+*.so
+*.a
+*.lo
+*.la
+
+# ========== CMake 构建缓存与产物 ==========
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# ========== 可执行文件 ==========
+cbackup
+
+# ========== 测试冗余数据 ==========
+# 备份包文件
+*.cbk
+# 测试时产生的临时目录
+/tmp/cbtest_*
+/tmp/cbpack_*
+/tmp/cbevict_*
+
+# ========== 性能分析产物 ==========
+gmon.out
+perf.data
+perf.data.old
+
+# ========== valgrind 日志 ==========
+vgcore.*
+
+# ========== IDE 与宿主机环境 ==========
+.vscode/
+*.user
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ========== 日志文件 ==========
+*.log
