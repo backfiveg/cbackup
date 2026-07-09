@@ -4,11 +4,18 @@
 #include <cstring>
 #include <sys/stat.h>
 
+#include "compress/compressor.h"
+#include "crypto/crypto.h"
+
 namespace cbackup {
+
+// Forward declaration (full definition in filter/filter.h).
+struct FilterConfig;
 
 // Magic number: "CBKP"
 static constexpr uint32_t PACK_MAGIC   = 0x43424B50U;
-static constexpr uint16_t PACK_VERSION = 0x0100U;
+// v2: archive header carries compression + encryption algorithm ids.
+static constexpr uint16_t PACK_VERSION = 0x0200U;
 
 // File type stored in archive
 enum class EntryType : uint8_t {
@@ -25,8 +32,9 @@ enum class EntryType : uint8_t {
 struct ArchiveHeader {
     uint32_t magic;
     uint16_t version;
-    uint8_t  compressed;   // 1 if payload is zlib-compressed
-    uint8_t  reserved[9];
+    uint8_t  compress_algo;  // compress::Algorithm applied to every payload
+    uint8_t  cipher_algo;    // crypto::Algorithm applied after compression
+    uint8_t  reserved[8];
 };
 
 struct EntryHeader {
@@ -52,7 +60,10 @@ struct EntryHeader {
 struct PackOptions {
     std::string source;
     std::string dest;          // output .cbk file path
-    bool compress = false;     // EX-05
+    bool compress = false;     // legacy flag: true => zlib (EX-05)
+    compress::Algorithm compress_algo = compress::Algorithm::NONE;  // EX-05
+    crypto::Algorithm   cipher_algo   = crypto::Algorithm::NONE;    // EX-06
+    std::string password;            // EX-06 key
     bool preserve_metadata = false;  // EX-02
     bool special_files = false;      // EX-01
     FilterConfig* filter = nullptr;  // EX-03
@@ -62,6 +73,7 @@ struct PackOptions {
 struct UnpackOptions {
     std::string archive;
     std::string dest;
+    std::string password;            // EX-06 key (required if archive encrypted)
     bool verbose = false;
 };
 

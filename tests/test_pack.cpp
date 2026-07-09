@@ -104,6 +104,82 @@ TEST_F(PackTest, UnpackNonexistentFails) {
     EXPECT_NE(ustats.exit_code, 0);
 }
 
+TEST_F(PackTest, PackHuffmanAndUnpack) {
+    PackOptions popts;
+    popts.source       = src_dir_;
+    popts.dest         = archive_;
+    popts.compress_algo = compress::Algorithm::HUFFMAN;
+
+    auto pstats = pack(popts);
+    EXPECT_EQ(pstats.exit_code, 0);
+
+    UnpackOptions uopts;
+    uopts.archive = archive_;
+    uopts.dest    = unpack_dir_;
+    auto ustats = unpack(uopts);
+    EXPECT_EQ(ustats.exit_code, 0);
+
+    EXPECT_EQ(read_file_str(unpack_dir_ + "/a.txt"), "content A");
+    EXPECT_EQ(read_file_str(unpack_dir_ + "/sub/b.txt"), "content B");
+}
+
+TEST_F(PackTest, PackEncryptedRc4AndUnpack) {
+    PackOptions popts;
+    popts.source     = src_dir_;
+    popts.dest       = archive_;
+    popts.cipher_algo = crypto::Algorithm::RC4;
+    popts.password   = "secret123";
+
+    auto pstats = pack(popts);
+    EXPECT_EQ(pstats.exit_code, 0);
+
+    UnpackOptions uopts;
+    uopts.archive  = archive_;
+    uopts.dest     = unpack_dir_;
+    uopts.password = "secret123";
+    auto ustats = unpack(uopts);
+    EXPECT_EQ(ustats.exit_code, 0);
+
+    EXPECT_EQ(read_file_str(unpack_dir_ + "/a.txt"), "content A");
+}
+
+TEST_F(PackTest, PackHuffmanPlusAesAndUnpack) {
+    PackOptions popts;
+    popts.source        = src_dir_;
+    popts.dest          = archive_;
+    popts.compress_algo = compress::Algorithm::HUFFMAN;
+    popts.cipher_algo   = crypto::Algorithm::AES128;
+    popts.password      = "topsecret";
+
+    auto pstats = pack(popts);
+    EXPECT_EQ(pstats.exit_code, 0);
+
+    UnpackOptions uopts;
+    uopts.archive  = archive_;
+    uopts.dest     = unpack_dir_;
+    uopts.password = "topsecret";
+    auto ustats = unpack(uopts);
+    EXPECT_EQ(ustats.exit_code, 0);
+
+    EXPECT_EQ(read_file_str(unpack_dir_ + "/a.txt"), "content A");
+    EXPECT_EQ(read_file_str(unpack_dir_ + "/sub/b.txt"), "content B");
+}
+
+TEST_F(PackTest, EncryptedArchiveNeedsPassword) {
+    PackOptions popts;
+    popts.source     = src_dir_;
+    popts.dest       = archive_;
+    popts.cipher_algo = crypto::Algorithm::RC4;
+    popts.password   = "pw";
+    ASSERT_EQ(pack(popts).exit_code, 0);
+
+    // Unpack without password should fail.
+    UnpackOptions uopts;
+    uopts.archive = archive_;
+    uopts.dest    = unpack_dir_;
+    EXPECT_NE(unpack(uopts).exit_code, 0);
+}
+
 TEST_F(PackTest, PackHardlink) {
     // Create a hard link in source
     std::string orig = src_dir_ + "/a.txt";

@@ -1,5 +1,6 @@
 #include "pack/packer.h"
 #include "compress/compressor.h"
+#include "crypto/crypto.h"
 #include "filter/filter.h"
 #include "utils/logger.h"
 #include "utils/path_utils.h"
@@ -101,11 +102,23 @@ PackStats pack(const PackOptions& opts) {
         return stats;
     }
 
+    // Resolve effective compression algorithm (legacy -z => zlib).
+    compress::Algorithm calgo = opts.compress_algo;
+    if (calgo == compress::Algorithm::NONE && opts.compress)
+        calgo = compress::Algorithm::ZLIB;
+    crypto::Algorithm cipher = opts.cipher_algo;
+    if (cipher != crypto::Algorithm::NONE && opts.password.empty()) {
+        Logger::error("Encryption requested but no password provided.");
+        stats.exit_code = 1;
+        return stats;
+    }
+
     // Write archive header
     ArchiveHeader ahdr{};
-    ahdr.magic      = PACK_MAGIC;
-    ahdr.version    = PACK_VERSION;
-    ahdr.compressed = opts.compress ? 1 : 0;
+    ahdr.magic         = PACK_MAGIC;
+    ahdr.version       = PACK_VERSION;
+    ahdr.compress_algo = static_cast<uint8_t>(calgo);
+    ahdr.cipher_algo   = static_cast<uint8_t>(cipher);
     write_checked(ofs, &ahdr, sizeof(ahdr));
 
     std::string norm_src = path_utils::normalize(opts.source);
@@ -148,100 +161,104 @@ PackStats pack(const PackOptions& opts) {
                 continue;
             }
 
-            // Apply filter (not for directories)
-            if (!S_ISDIR(st.st_mode) && !filter.should_include(rel_path)) {
+            // Apply 6-dimension filter (not for directories, which we must
+            // still descend to preserve structure).
+            if (!S_ISDIR(st.st_mode) && !filter.should_include(rel_path, st)) {
                 stats.entries++;  // counted as skipped entry, not written
                 continue;
             }
 
             EntryType etype = classify(st);
 
-            // Hard-link detection: regular files with nlink > 1
+            // Payload + original length, computed uniformly per entry type.
+            std::vector<uint8_t> payload;
+            uint64_t orig_len = 0;
+            bool is_hardlink = false;
+
+            // Hard-link detection: regular files with nlink > 1.
             if (etype == EntryType::REGULAR && st.st_nlink > 1) {
                 InodeKey key{st.st_dev, st.st_ino};
                 auto it = seen_inodes.find(key);
                 if (it != seen_inodes.end()) {
-                    // This is a hard link to an already-packed file
-                    // Payload = the rel_path of the first occurrence
+                    // Hard link to an already-packed file: payload is the
+                    // rel_path of the first occurrence.
                     const std::string& target = it->second;
-                    std::vector<uint8_t> payload(target.begin(), target.end());
-                    EntryHeader ehdr = make_entry_header(
-                        st,
-                        static_cast<uint32_t>(rel_path.size()),
-                        payload.size(),
-                        payload.size(),
-                        EntryType::HARDLINK);
+                    payload.assign(target.begin(), target.end());
+                    orig_len = payload.size();
+                    etype = EntryType::HARDLINK;
+                    is_hardlink = true;
+                    Logger::info("Hardlink: " + rel_path + " -> " + target);
+                } else {
+                    seen_inodes[key] = rel_path;
+                }
+            }
+
+            if (!is_hardlink) {
+                if (etype == EntryType::SYMLINK) {
+                    if (!opts.special_files) { continue; }
+                    char link_buf[PATH_MAX + 1];
+                    ssize_t llen = readlink(src_path.c_str(), link_buf, PATH_MAX);
+                    if (llen > 0) {
+                        link_buf[llen] = '\0';
+                        payload.assign(link_buf, link_buf + llen);
+                        orig_len = payload.size();
+                    }
+                } else if (etype == EntryType::REGULAR) {
+                    int fd = open(src_path.c_str(), O_RDONLY);
+                    if (fd >= 0) {
+                        std::vector<uint8_t> tmp(compress::CHUNK_SIZE);
+                        ssize_t n;
+                        while ((n = read(fd, tmp.data(), tmp.size())) > 0) {
+                            payload.insert(payload.end(),
+                                           tmp.data(), tmp.data() + n);
+                        }
+                        close(fd);
+                        orig_len = payload.size();
+                        stats.bytes_in += orig_len;
+                    }
+                } else if (etype == EntryType::DIRECTORY) {
+                    // No payload, just record the directory node.
+                } else {
+                    // FIFO / CHR_DEV / BLK_DEV: metadata only, no payload.
+                    if (!opts.special_files) { continue; }
+                }
+            }
+
+            // Uniform pipeline: compress -> encrypt. orig_len stays the
+            // ORIGINAL payload size so unpack can size the output correctly.
+            std::vector<uint8_t> final_payload;
+            if (!payload.empty()) {
+                std::vector<uint8_t> comp;
+                if (calgo != compress::Algorithm::NONE) {
                     try {
-                        write_checked(ofs, &ehdr, sizeof(ehdr));
-                        write_checked(ofs, rel_path.data(), rel_path.size());
-                        write_checked(ofs, payload.data(), payload.size());
+                        comp = compress::compress_chunk(
+                            calgo, payload.data(), payload.size());
                     } catch (const std::exception& e) {
-                        Logger::error(e.what());
+                        Logger::warn("Compress failed for " + rel_path + ": "
+                                     + e.what() + " - storing uncompressed");
+                        comp = payload;
+                    }
+                } else {
+                    comp = payload;
+                }
+
+                if (cipher != crypto::Algorithm::NONE) {
+                    try {
+                        final_payload = crypto::encrypt(
+                            cipher, opts.password, comp.data(), comp.size());
+                    } catch (const std::exception& e) {
+                        Logger::error("Encrypt failed for " + rel_path + ": "
+                                      + e.what());
                         stats.exit_code = 1;
                         closedir(dirp);
                         return stats;
                     }
-                    global_checksum ^= adler32_simple(
-                        reinterpret_cast<const uint8_t*>(rel_path.data()),
-                        rel_path.size());
-                    stats.bytes_out += sizeof(ehdr) + rel_path.size() + payload.size();
-                    stats.entries++;
-                    Logger::info("Hardlink: " + rel_path + " -> " + target);
-                    continue;
                 } else {
-                    seen_inodes[key] = rel_path;
-                    // Fall through to pack as REGULAR
+                    final_payload = std::move(comp);
                 }
             }
 
-            // Collect data payload
-            std::vector<uint8_t> payload;
-            uint64_t orig_len = 0;
-
-            if (etype == EntryType::SYMLINK && opts.special_files) {
-                char link_buf[PATH_MAX + 1];
-                ssize_t llen = readlink(src_path.c_str(), link_buf, PATH_MAX);
-                if (llen > 0) {
-                    link_buf[llen] = '\0';
-                    payload.assign(link_buf, link_buf + llen);
-                    orig_len = payload.size();
-                }
-            } else if (etype == EntryType::REGULAR) {
-                int fd = open(src_path.c_str(), O_RDONLY);
-                if (fd >= 0) {
-                    std::vector<uint8_t> tmp(compress::CHUNK_SIZE);
-                    ssize_t n;
-                    while ((n = read(fd, tmp.data(), tmp.size())) > 0) {
-                        payload.insert(payload.end(),
-                                       tmp.data(), tmp.data() + n);
-                    }
-                    close(fd);
-                    orig_len = payload.size();
-                    stats.bytes_in += orig_len;
-                }
-            } else if (etype == EntryType::DIRECTORY) {
-                // No payload, just record the directory
-            } else if (!opts.special_files) {
-                // Skip special files if not enabled
-                continue;
-            }
-
-            // Compress payload if enabled
-            std::vector<uint8_t> final_payload;
-            if (opts.compress && !payload.empty()) {
-                try {
-                    final_payload = compress::compress_chunk(
-                        payload.data(), payload.size());
-                } catch (const std::exception& e) {
-                    Logger::warn("Compress failed for " + rel_path + ": "
-                                 + e.what() + " - storing uncompressed");
-                    final_payload = payload;
-                }
-            } else {
-                final_payload = payload;
-            }
-
-            // Write entry
+            // Write entry: data_len = on-disk size, orig_len = original size.
             EntryHeader ehdr = make_entry_header(
                 st,
                 static_cast<uint32_t>(rel_path.size()),

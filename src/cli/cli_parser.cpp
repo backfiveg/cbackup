@@ -28,14 +28,21 @@ void print_usage(const char* prog) {
         "  --exclude <glob>   Exclude pattern (e.g. '*.tmp')\n"
         "\n"
         "pack options:\n"
-        "  -z, --compress     Compress archive with zlib\n"
-        "  -m, --metadata     Preserve metadata\n"
-        "  --include <glob>   Include pattern\n"
-        "  --exclude <glob>   Exclude pattern\n"
+        "  -z, --compress zlib|huffman  Compress archive (huffman = hand-impl)\n"
+        "  --encrypt rc4|aes            Encrypt payloads (rc4 = hand-impl)\n"
+        "  -p, --password <key>         Encryption key\n"
+        "  -m, --metadata               Preserve metadata\n"
+        "  --include <glob>             Include by name (e.g. '*.cpp')\n"
+        "  --exclude <glob>             Exclude by path (e.g. '.git/*')\n"
+        "  --type <list>                By type: regular,symlink,dir,special\n"
+        "  --mtime <spec>               By time: '-7d' (<=7d) / '+30d' (>30d)\n"
+        "  --size <spec>                By size: '<500M' / '>100K'\n"
+        "  --owner <user>               By owner (username or uid)\n"
         "\n"
         "unpack options:\n"
         "  --file <path>      Archive file (.cbk)\n"
         "  --dest <path>      Destination directory\n"
+        "  -p, --password <key>  Decryption key (if archive is encrypted)\n"
         "\n"
         "restore options:\n"
         "  --source <path>    Backup directory\n"
@@ -130,8 +137,31 @@ bool parse_args(int argc, char* argv[], CliArgs& out) {
         } else if (strcmp(arg, "--exclude") == 0) {
             const char* v = next_arg(); if (!v) return false;
             out.exclude_patterns.push_back(v);
-        } else if (strcmp(arg, "-z") == 0 || strcmp(arg, "--compress") == 0) {
+        } else if (strcmp(arg, "--type") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.type_filter = v;
+        } else if (strcmp(arg, "--mtime") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.mtime_filter = v;
+        } else if (strcmp(arg, "--size") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.size_filter = v;
+        } else if (strcmp(arg, "--owner") == 0 || strcmp(arg, "--user") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.owner_filter = v;
+        } else if (strcmp(arg, "--compress") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.compress_algo = v;
             out.compress = true;
+        } else if (strcmp(arg, "-z") == 0) {
+            out.compress = true;
+            out.compress_algo = "zlib";
+        } else if (strcmp(arg, "--encrypt") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.encrypt_algo = v;
+        } else if (strcmp(arg, "-p") == 0 || strcmp(arg, "--password") == 0) {
+            const char* v = next_arg(); if (!v) return false;
+            out.password = v;
         } else if (strcmp(arg, "-m") == 0 || strcmp(arg, "--metadata") == 0) {
             out.preserve_metadata = true;
         } else if (strcmp(arg, "--verbose") == 0 || strcmp(arg, "-v") == 0) {

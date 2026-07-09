@@ -214,7 +214,7 @@ BackupStats backup(const BackupOptions& opts) {
                 continue;
             }
 
-            if (!S_ISDIR(st.st_mode) && !filter.should_include(rel_path)) {
+            if (!S_ISDIR(st.st_mode) && !filter.should_include(rel_path, st)) {
                 Logger::info("Filtered out: " + rel_path);
                 stats.files_skipped++;
                 continue;

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cbackup :: 控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #terminal::-webkit-scrollbar { width: 8px; }
+    #terminal::-webkit-scrollbar-thumb { background: #16a34a; border-radius: 4px; }
+    .glow { text-shadow: 0 0 6px rgba(34,197,94,.6); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200 min-h-screen">
+  <div class="max-w-7xl mx-auto p-4 md:p-6">
+    <!-- Header -->
+    <header class="flex items-center justify-between border-b border-zinc-800 pb-3 mb-5">
+      <h1 class="text-2xl font-bold text-green-400 glow">▚ cbackup <span class="text-zinc-500 text-base font-normal">数据备份控制台</span></h1>
+      <span id="status" class="text-xs px-2 py-1 rounded bg-zinc-800 text-zinc-400">IDLE</span>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <!-- Left: parameter form -->
+      <section class="bg-zinc-900/60 border border-zinc-800 rounded-lg p-4 space-y-4">
+        <div>
+          <label class="block text-xs text-zinc-400 mb-1">操作 (Subcommand)</label>
+          <select id="subcmd" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-sm focus:outline-none focus:border-green-500">
+            <option value="pack">pack — 打包归档 (.cbk)</option>
+            <option value="unpack">unpack — 解包还原</option>
+            <option value="backup">backup — 目录复制备份</option>
+            <option value="restore">restore — 目录还原</option>
+            <option value="cron">cron — 定时备份</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div data-role="source">
+            <label class="block text-xs text-zinc-400 mb-1">源目录 --source</label>
+            <input id="source" placeholder="/data/src" class="inp" />
+          </div>
+          <div data-role="dest">
+            <label class="block text-xs text-zinc-400 mb-1">目标 --dest</label>
+            <input id="dest" placeholder="/data/archive.cbk" class="inp" />
+          </div>
+          <div data-role="file" class="hidden">
+            <label class="block text-xs text-zinc-400 mb-1">归档文件 --file</label>
+            <input id="file" placeholder="/data/archive.cbk" class="inp" />
+          </div>
+          <div data-role="schedule" class="hidden">
+            <label class="block text-xs text-zinc-400 mb-1">计划 --schedule</label>
+            <input id="schedule" placeholder="0 2 * * *" class="inp" />
+          </div>
+          <div data-role="keep" class="hidden">
+            <label class="block text-xs text-zinc-400 mb-1">保留份数 --keep</label>
+            <input id="keep" type="number" placeholder="5" class="inp" />
+          </div>
+        </div>
+
+        <!-- Algorithm selection -->
+        <fieldset class="border border-zinc-800 rounded p-3">
+          <legend class="text-xs text-green-400 px-1">算法组合</legend>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">压缩 --compress</label>
+              <select id="compress" class="inp">
+                <option value="">不压缩</option>
+                <option value="huffman">huffman (手工实现)</option>
+                <option value="zlib">zlib (第三方库)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">加密 --encrypt</label>
+              <select id="encrypt" class="inp">
+                <option value="">不加密</option>
+                <option value="rc4">rc4 (手工实现)</option>
+                <option value="aes">aes-128 (OpenSSL)</option>
+              </select>
+            </div>
+            <div class="col-span-2">
+              <label class="block text-xs text-zinc-400 mb-1">密钥 -p / --password</label>
+              <input id="password" type="password" placeholder="secret123" class="inp" />
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- 6-dimension filters -->
+        <fieldset class="border border-zinc-800 rounded p-3">
+          <legend class="text-xs text-green-400 px-1">自定义过滤 (6 维)</legend>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按名称 --include</label>
+              <input id="include" placeholder="*.cpp" class="inp" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按路径 --exclude</label>
+              <input id="exclude" placeholder=".git/*" class="inp" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按类型 --type</label>
+              <input id="type" placeholder="regular,symlink" class="inp" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按用户 --owner</label>
+              <input id="owner" placeholder="root" class="inp" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按时间 --mtime</label>
+              <input id="mtime" placeholder="-7d" class="inp" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-400 mb-1">按尺寸 --size</label>
+              <input id="size" placeholder="&lt;500M" class="inp" />
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            <input id="metadata" type="checkbox" class="accent-green-500" /> 保留元数据 -m
+          </label>
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            <input id="verbose" type="checkbox" class="accent-green-500" /> 详细日志 --verbose
+          </label>
+        </div>
+
+        <div class="flex gap-3">
+          <button id="run" class="flex-1 bg-green-600 hover:bg-green-500 text-black font-bold py-2 rounded transition">▶ 执行</button>
+          <button id="stop" class="bg-zinc-800 hover:bg-red-600 text-zinc-200 px-4 py-2 rounded transition">■ 停止</button>
+          <button id="clear" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded transition">清屏</button>
+        </div>
+      </section>
+
+      <!-- Right: live terminal -->
+      <section class="bg-black border border-zinc-800 rounded-lg flex flex-col">
+        <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+          <span class="w-3 h-3 rounded-full bg-red-500"></span>
+          <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+          <span class="w-3 h-3 rounded-full bg-green-500"></span>
+          <span class="text-xs text-zinc-500 ml-2">cbackup — live output</span>
+        </div>
+        <pre id="terminal" class="flex-1 overflow-auto p-3 text-sm text-green-400 leading-relaxed" style="min-height: 520px; max-height: 70vh;"></pre>
+      </section>
+    </div>
+  </div>
+
+  <style>
+    .inp { width:100%; background:#27272a; border:1px solid #3f3f46; border-radius:6px; padding:8px; font-size:13px; color:#e4e4e7; outline:none; }
+    .inp:focus { border-color:#22c55e; }
+  </style>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const term = $('terminal');
+    let es = null;
+
+    // Fields visible per subcommand.
+    const layout = {
+      pack:    ['source','dest'],
+      unpack:  ['file','dest'],
+      backup:  ['source','dest'],
+      restore: ['source','dest'],
+      cron:    ['source','dest','schedule','keep'],
+    };
+
+    function applyLayout() {
+      const sub = $('subcmd').value;
+      const show = new Set(layout[sub] || []);
+      document.querySelectorAll('[data-role]').forEach(el => {
+        el.classList.toggle('hidden', !show.has(el.dataset.role));
+      });
+    }
+    $('subcmd').addEventListener('change', applyLayout);
+    applyLayout();
+
+    function setStatus(text, cls) {
+      const s = $('status');
+      s.textContent = text;
+      s.className = 'text-xs px-2 py-1 rounded ' + cls;
+    }
+
+    function println(text, color) {
+      const span = document.createElement('span');
+      span.textContent = text + '\n';
+      if (color) span.style.color = color;
+      term.appendChild(span);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function buildQuery() {
+      const keys = ['subcmd','source','dest','file','schedule','keep',
+                    'compress','encrypt','password','include','exclude',
+                    'type','mtime','size','owner'];
+      const p = new URLSearchParams();
+      keys.forEach(k => { const v = $(k) ? $(k).value : ''; if (v) p.set(k, v); });
+      if ($('metadata').checked) p.set('metadata', '1');
+      if ($('verbose').checked) p.set('verbose', '1');
+      return p.toString();
+    }
+
+    $('run').addEventListener('click', () => {
+      if (es) es.close();
+      setStatus('RUNNING', 'bg-green-900 text-green-300 animate-pulse');
+      es = new EventSource('/stream?' + buildQuery());
+
+      es.addEventListener('cmd', (e) => println('$ ' + JSON.parse(e.data), '#a1a1aa'));
+      es.onmessage = (e) => println(JSON.parse(e.data), '#4ade80');
+      es.addEventListener('error', (e) => {
+        try { println('[ERROR] ' + JSON.parse(e.data), '#f87171'); } catch (_) {}
+      });
+      es.addEventListener('done', (e) => {
+        const code = e.data;
+        println('[EXIT] code=' + code, code === '0' ? '#4ade80' : '#f87171');
+        setStatus(code === '0' ? 'DONE' : 'FAILED',
+                  code === '0' ? 'bg-zinc-800 text-green-400' : 'bg-red-900 text-red-300');
+        es.close(); es = null;
+      });
+    });
+
+    $('stop').addEventListener('click', () => {
+      if (es) { es.close(); es = null; }
+      setStatus('STOPPED', 'bg-zinc-800 text-zinc-400');
+    });
+
+    $('clear').addEventListener('click', () => { term.innerHTML = ''; });
+
+    println('cbackup web console ready. 配置左侧参数后点击「执行」。', '#6b7280');
+  </script>
+</body>
+</html>
