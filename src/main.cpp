@@ -137,16 +137,14 @@ int main(int argc, char* argv[]) {
             cfg.dest               = args.dest;
             cfg.keep               = args.keep;
             cfg.compress           = args.compress;
+            cfg.compress_algo      = calgo;
+            cfg.cipher_algo        = cipher;
+            cfg.password           = args.password;
+            cfg.filter             = fcfg;
             cfg.preserve_metadata  = args.preserve_metadata;
             cfg.verbose            = args.verbose;
 
-            // Capture algorithm/password for the periodic pack.
-            compress::Algorithm cron_calgo = calgo;
-            crypto::Algorithm   cron_cipher = cipher;
-            std::string         cron_pass = args.password;
-
-            auto on_backup = [cron_calgo, cron_cipher, cron_pass]
-                             (const CronConfig& c) {
+            auto on_backup = [](const CronConfig& c) {
                 PackOptions opts;
                 time_t now = time(nullptr);
                 char ts[32];
@@ -154,11 +152,12 @@ int main(int argc, char* argv[]) {
                 opts.source            = c.source;
                 opts.dest              = c.dest + "/backup_" + ts + ".cbk";
                 opts.compress          = c.compress;
-                opts.compress_algo     = cron_calgo;
-                opts.cipher_algo       = cron_cipher;
-                opts.password          = cron_pass;
+                opts.compress_algo     = c.compress_algo;
+                opts.cipher_algo       = c.cipher_algo;
+                opts.password          = c.password;
                 opts.preserve_metadata = c.preserve_metadata;
                 opts.special_files     = true;
+                opts.filter            = &c.filter;
                 opts.verbose           = c.verbose;
                 pack(opts);
             };

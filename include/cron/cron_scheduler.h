@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include <functional>
+#include "filter/filter.h"
+#include "compress/compressor.h"
+#include "crypto/crypto.h"
 
 namespace cbackup {
 
@@ -10,6 +13,10 @@ struct CronConfig {
     std::string dest;
     int keep = 0;            // 0 = keep all; >0 = keep N latest
     bool compress = false;
+    compress::Algorithm compress_algo = compress::Algorithm::NONE;  // EX-05
+    crypto::Algorithm   cipher_algo   = crypto::Algorithm::NONE;    // EX-06
+    std::string password;            // EX-06 key
+    FilterConfig filter;             // EX-03: 6-dimension filter
     bool preserve_metadata = false;
     bool verbose = false;
 };
