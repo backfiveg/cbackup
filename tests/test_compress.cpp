@@ -45,14 +45,15 @@ TEST(Compress, LargeData) {
     EXPECT_EQ(decompressed, big_data);
 }
 
-TEST(Compress, DecompressWrongSizeThrows) {
+TEST(Compress, DecompressCorruptedDataThrows) {
     std::string s = "test data for compression";
     std::vector<uint8_t> d(s.begin(), s.end());
     auto c = compress_chunk(d.data(), d.size());
 
-    // Providing wrong orig_len should throw or return wrong data
+    // Corrupted compressed data should cause zlib to throw.
+    if (!c.empty()) c[0] ^= 0xFF;  // flip bits in first byte
     EXPECT_THROW(
-        decompress_chunk(c.data(), c.size(), d.size() * 100),
+        decompress_chunk(c.data(), c.size(), d.size()),
         std::runtime_error
     );
 }

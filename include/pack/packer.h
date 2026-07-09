@@ -67,7 +67,7 @@ struct PackOptions {
     std::string password;            // EX-06 key
     bool preserve_metadata = false;  // EX-02
     bool special_files = false;      // EX-01
-    FilterConfig* filter = nullptr;  // EX-03
+    const FilterConfig* filter = nullptr;  // EX-03
     bool verbose = false;
 };
 
