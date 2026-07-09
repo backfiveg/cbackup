@@ -10,11 +10,15 @@ RUN apt-get update && apt-get install -y \
     make \
     git \
     zlib1g-dev \
+    libssl-dev \
     libgtest-dev \
     valgrind \
     binutils \
     linux-tools-common \
     cpplint \
+    python3 \
+    python3-pip \
+    && pip3 install --no-cache-dir flask \
     && rm -rf /var/lib/apt/lists/*
 
 # Build and install gtest from source
@@ -28,5 +32,9 @@ COPY . /workspace/
 
 RUN mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
 
-ENTRYPOINT ["/workspace/build/cbackup"]
-CMD ["--help"]
+# Web GUI (EX-09): Flask serves the console on port 8080
+ENV CBACKUP_BIN=/workspace/build/cbackup
+EXPOSE 8080
+
+# Default: launch the Web GUI. Override with `docker run ... <args>` to use CLI.
+ENTRYPOINT ["python3", "/workspace/gui/app.py"]

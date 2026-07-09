@@ -1,5 +1,6 @@
 #include "pack/packer.h"
 #include "compress/compressor.h"
+#include "crypto/crypto.h"
 #include "utils/logger.h"
 #include "utils/path_utils.h"
 #include "utils/fd_wrapper.h"
@@ -74,7 +75,17 @@ PackStats unpack(const UnpackOptions& opts) {
         return stats;
     }
 
-    bool compressed = (ahdr.compressed == 1);
+    compress::Algorithm calgo =
+        static_cast<compress::Algorithm>(ahdr.compress_algo);
+    crypto::Algorithm cipher =
+        static_cast<crypto::Algorithm>(ahdr.cipher_algo);
+
+    if (cipher != crypto::Algorithm::NONE && opts.password.empty()) {
+        Logger::error("Archive is encrypted; a password (-p) is required.");
+        stats.exit_code = 1;
+        return stats;
+    }
+
     std::string norm_dst = path_utils::normalize(opts.dest);
 
     // Read entries until we reach the 4-byte footer checksum at end of file
@@ -140,18 +151,37 @@ PackStats unpack(const UnpackOptions& opts) {
             }
         }
 
-        // Decompress if needed
+        // Reverse pipeline: decrypt -> decompress.
         std::vector<uint8_t> final_data;
-        if (compressed && ehdr.orig_len > 0 && ehdr.data_len > 0) {
-            try {
-                final_data = compress::decompress_chunk(
-                    payload.data(), payload.size(), ehdr.orig_len);
-            } catch (const std::exception& e) {
-                Logger::warn("Decompress failed for " + rel_name + ": " + e.what());
-                final_data = payload;
+        if (ehdr.data_len > 0) {
+            std::vector<uint8_t> decrypted;
+            if (cipher != crypto::Algorithm::NONE) {
+                try {
+                    decrypted = crypto::decrypt(
+                        cipher, opts.password, payload.data(), payload.size());
+                } catch (const std::exception& e) {
+                    Logger::error("Decrypt failed for " + rel_name + ": "
+                                  + e.what() + " (wrong password?)");
+                    stats.exit_code = 1;
+                    return stats;
+                }
+            } else {
+                decrypted = std::move(payload);
             }
-        } else {
-            final_data = payload;
+
+            if (calgo != compress::Algorithm::NONE && ehdr.orig_len > 0) {
+                try {
+                    final_data = compress::decompress_chunk(
+                        calgo, decrypted.data(), decrypted.size(),
+                        ehdr.orig_len);
+                } catch (const std::exception& e) {
+                    Logger::warn("Decompress failed for " + rel_name + ": "
+                                 + e.what());
+                    final_data = decrypted;
+                }
+            } else {
+                final_data = std::move(decrypted);
+            }
         }
 
         // Restore by type

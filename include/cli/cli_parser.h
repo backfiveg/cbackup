@@ -23,13 +23,22 @@ struct CliArgs {
     bool verbose = false;
 
     // backup / pack
-    bool compress = false;         // -z
+    bool compress = false;         // -z (shorthand for --compress zlib)
     bool preserve_metadata = false; // -m
     bool special_files = true;     // enabled by default
 
-    // filter (EX-03)
-    std::vector<std::string> include_patterns;
-    std::vector<std::string> exclude_patterns;
+    // compression / encryption (EX-05 / EX-06)
+    std::string compress_algo;     // --compress <zlib|huffman>
+    std::string encrypt_algo;      // --encrypt <rc4|aes>
+    std::string password;          // -p / --password
+
+    // filter (EX-03) — 6 dimensions
+    std::vector<std::string> include_patterns;  // by name
+    std::vector<std::string> exclude_patterns;  // by path
+    std::string type_filter;       // --type regular,symlink,dir,special
+    std::string mtime_filter;      // --mtime "-7d"
+    std::string size_filter;       // --size "<500M"
+    std::string owner_filter;      // --owner root / --user
 
     // restore / unpack
     std::string archive_file;

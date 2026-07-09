@@ -15,8 +15,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -pg")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 add_compile_options(-Wall -Wextra -Wpedantic)
 
-# Find zlib
+# Find zlib (EX-05) and OpenSSL (EX-06)
 find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Find GTest
 find_package(GTest QUIET)
@@ -38,7 +39,8 @@ set(CLI_SRCS src/cli/cli_parser.cpp)
 set(BACKUP_SRCS src/backup/backup.cpp src/backup/restore.cpp)
 set(FILTER_SRCS src/filter/filter.cpp)
 set(PACK_SRCS src/pack/packer.cpp src/pack/unpacker.cpp)
-set(COMPRESS_SRCS src/compress/compressor.cpp)
+set(COMPRESS_SRCS src/compress/compressor.cpp src/compress/huffman.cpp)
+set(CRYPTO_SRCS src/crypto/crypto.cpp src/crypto/rc4.cpp src/crypto/aes.cpp)
 set(CRON_SRCS src/cron/cron_scheduler.cpp)
 set(DAEMON_SRCS src/daemon/inotify_daemon.cpp)
 set(UTILS_SRCS src/utils/logger.cpp src/utils/path_utils.cpp src/utils/fd_wrapper.cpp)
@@ -51,12 +53,13 @@ add_executable(cbackup
   ${FILTER_SRCS}
   ${PACK_SRCS}
   ${COMPRESS_SRCS}
+  ${CRYPTO_SRCS}
   ${CRON_SRCS}
   ${DAEMON_SRCS}
   ${UTILS_SRCS}
 )
 
-target_link_libraries(cbackup PRIVATE ZLIB::ZLIB pthread)
+target_link_libraries(cbackup PRIVATE ZLIB::ZLIB OpenSSL::Crypto pthread)
 
 # Tests
 enable_testing()
@@ -66,6 +69,8 @@ set(TEST_SRCS
   tests/test_filter.cpp
   tests/test_pack.cpp
   tests/test_compress.cpp
+  tests/test_huffman.cpp
+  tests/test_crypto.cpp
   tests/test_cron.cpp
   tests/test_path_utils.cpp
 )
@@ -76,14 +81,15 @@ add_executable(cbackup_tests
   ${FILTER_SRCS}
   ${PACK_SRCS}
   ${COMPRESS_SRCS}
+  ${CRYPTO_SRCS}
   ${CRON_SRCS}
   ${UTILS_SRCS}
 )
 
 if(GTest_FOUND)
-  target_link_libraries(cbackup_tests PRIVATE GTest::GTest GTest::Main ZLIB::ZLIB pthread)
+  target_link_libraries(cbackup_tests PRIVATE GTest::GTest GTest::Main ZLIB::ZLIB OpenSSL::Crypto pthread)
 else()
-  target_link_libraries(cbackup_tests PRIVATE gtest gtest_main ZLIB::ZLIB pthread)
+  target_link_libraries(cbackup_tests PRIVATE gtest gtest_main ZLIB::ZLIB OpenSSL::Crypto pthread)
 endif()
 
 include(GoogleTest)
