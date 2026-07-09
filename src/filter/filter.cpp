@@ -3,7 +3,7 @@
 
 namespace cbackup {
 
-static std::regex glob_to_regex(const std::string& pattern) {
+std::regex Filter::glob_to_regex(const std::string& pattern) {
     std::string re = "^";
     for (char c : pattern) {
         switch (c) {

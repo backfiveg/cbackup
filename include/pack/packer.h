@@ -4,6 +4,8 @@
 #include <cstring>
 #include <sys/stat.h>
 
+#include "filter/filter.h"
+
 namespace cbackup {
 
 // Magic number: "CBKP"

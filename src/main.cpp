@@ -6,6 +6,7 @@
 #include "utils/logger.h"
 
 #include <cstdlib>
+#include <ctime>
 
 using namespace cbackup;
 

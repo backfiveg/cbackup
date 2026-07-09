@@ -5,6 +5,7 @@
 #include "utils/fd_wrapper.h"
 
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <fcntl.h>
 #include <unistd.h>
 

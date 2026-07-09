@@ -5,6 +5,7 @@
 #include "utils/path_utils.h"
 
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
