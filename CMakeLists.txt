@@ -72,11 +72,13 @@ set(TEST_SRCS
   tests/test_huffman.cpp
   tests/test_crypto.cpp
   tests/test_cron.cpp
+  tests/test_cli_parser.cpp
   tests/test_path_utils.cpp
 )
 
 add_executable(cbackup_tests
   ${TEST_SRCS}
+  ${CLI_SRCS}
   ${BACKUP_SRCS}
   ${FILTER_SRCS}
   ${PACK_SRCS}
