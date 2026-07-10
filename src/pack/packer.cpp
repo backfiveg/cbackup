@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <cstring>
+#include <cstdio>
 #include <cerrno>
 #include <fstream>
 #include <map>
@@ -96,12 +97,25 @@ PackStats pack(const PackOptions& opts) {
         return stats;
     }
 
-    std::ofstream ofs(opts.dest, std::ios::binary | std::ios::trunc);
+    // Write to a temp file first; only rename to final dest on success.
+    // This prevents leaving a corrupt .cbk file on partial failure.
+    std::string tmp_dest = opts.dest + ".pack_tmp";
+    if (path_utils::exists(tmp_dest)) {
+        unlink(tmp_dest.c_str());
+    }
+
+    std::ofstream ofs(tmp_dest, std::ios::binary | std::ios::trunc);
     if (!ofs) {
-        Logger::error("Cannot create archive: " + opts.dest);
+        Logger::error("Cannot create archive: " + tmp_dest);
         stats.exit_code = 1;
         return stats;
     }
+
+    // On any failure after this point, remove the partial temp file.
+    auto cleanup_tmp = [&]() {
+        ofs.close();
+        unlink(tmp_dest.c_str());
+    };
 
     // Resolve effective compression algorithm (legacy -z => zlib).
     compress::Algorithm calgo = opts.compress_algo;
@@ -110,6 +124,7 @@ PackStats pack(const PackOptions& opts) {
     crypto::Algorithm cipher = opts.cipher_algo;
     if (cipher != crypto::Algorithm::NONE && opts.password.empty()) {
         Logger::error("Encryption requested but no password provided.");
+        cleanup_tmp();
         stats.exit_code = 1;
         return stats;
     }
@@ -250,6 +265,7 @@ PackStats pack(const PackOptions& opts) {
                     } catch (const std::exception& e) {
                         Logger::error("Encrypt failed for " + rel_path + ": "
                                       + e.what());
+                        cleanup_tmp();
                         stats.exit_code = 1;
                         closedir(dirp);
                         return stats;
@@ -274,6 +290,7 @@ PackStats pack(const PackOptions& opts) {
                     write_checked(ofs, final_payload.data(), final_payload.size());
             } catch (const std::exception& e) {
                 Logger::error(e.what());
+                cleanup_tmp();
                 stats.exit_code = 1;
                 closedir(dirp);
                 return stats;
@@ -296,6 +313,24 @@ PackStats pack(const PackOptions& opts) {
     // Write footer checksum
     write_checked(ofs, &global_checksum, sizeof(global_checksum));
     ofs.close();
+    if (!ofs) {
+        Logger::error("Failed to flush archive — disk full?");
+        cleanup_tmp();
+        stats.exit_code = 1;
+        return stats;
+    }
+
+    // Atomically rename temp file to final destination.
+    if (path_utils::exists(opts.dest)) {
+        unlink(opts.dest.c_str());
+    }
+    if (rename(tmp_dest.c_str(), opts.dest.c_str()) != 0) {
+        Logger::error("Cannot rename temp archive to " + opts.dest
+                      + ": " + strerror(errno));
+        cleanup_tmp();
+        stats.exit_code = 1;
+        return stats;
+    }
 
     printf("[DONE] Pack complete: %lu entries, %.2f MB -> %.2f MB\n",
            stats.entries,

@@ -7,10 +7,12 @@
 
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -41,15 +43,49 @@ PackStats unpack(const UnpackOptions& opts) {
         return stats;
     }
 
-    if (!path_utils::mkdir_p(opts.dest)) {
-        Logger::error("Cannot create dest: " + opts.dest);
+    // ── Pre-check dest ──────────────────────────────────────────
+    if (path_utils::exists(opts.dest)) {
+        if (!path_utils::is_dir(opts.dest)) {
+            Logger::error("Dest exists but is not a directory: " + opts.dest);
+            stats.exit_code = 1;
+            return stats;
+        }
+        // Check if dest is non-empty — warn the user.
+        DIR* check = opendir(opts.dest.c_str());
+        if (check) {
+            int count = 0;
+            struct dirent* e;
+            while ((e = readdir(check)) != nullptr) {
+                if (strcmp(e->d_name, ".") && strcmp(e->d_name, ".."))
+                    count++;
+                if (count > 0) break;
+            }
+            closedir(check);
+            if (count > 0)
+                Logger::warn("Dest directory is not empty — files may be "
+                             "overwritten: " + opts.dest);
+        }
+    }
+
+    // ── Create staging directory ────────────────────────────────
+    // Extract to a temp staging dir; only rename to final dest on
+    // success.  This prevents partial results from polluting the
+    // destination on failure.
+    std::string staging = opts.dest + ".unpack_tmp";
+    if (path_utils::exists(staging)) {
+        path_utils::rm_dir_recursive(staging);
+    }
+    if (!path_utils::mkdir_p(staging)) {
+        Logger::error("Cannot create staging directory: " + staging);
         stats.exit_code = 1;
         return stats;
     }
 
+    // ── Open archive ────────────────────────────────────────────
     std::ifstream ifs(opts.archive, std::ios::binary);
     if (!ifs) {
         Logger::error("Cannot open archive: " + opts.archive);
+        path_utils::rm_dir_recursive(staging);
         stats.exit_code = 1;
         return stats;
     }
@@ -60,17 +96,20 @@ PackStats unpack(const UnpackOptions& opts) {
         read_checked(ifs, &ahdr, sizeof(ahdr), "archive header");
     } catch (const std::exception& e) {
         Logger::error(e.what());
+        path_utils::rm_dir_recursive(staging);
         stats.exit_code = 1;
         return stats;
     }
 
     if (ahdr.magic != PACK_MAGIC) {
         Logger::error("Invalid archive magic number. File may be corrupted.");
+        path_utils::rm_dir_recursive(staging);
         stats.exit_code = 1;
         return stats;
     }
     if (ahdr.version != PACK_VERSION) {
         Logger::error("Unsupported archive version.");
+        path_utils::rm_dir_recursive(staging);
         stats.exit_code = 1;
         return stats;
     }
@@ -82,40 +121,42 @@ PackStats unpack(const UnpackOptions& opts) {
 
     if (cipher != crypto::Algorithm::NONE && opts.password.empty()) {
         Logger::error("Archive is encrypted; a password (-p) is required.");
+        path_utils::rm_dir_recursive(staging);
         stats.exit_code = 1;
         return stats;
     }
 
-    std::string norm_dst = path_utils::normalize(opts.dest);
+    std::string norm_staging = path_utils::normalize(staging);
 
-    // Read entries until we reach the 4-byte footer checksum at end of file
+    // ── Unpack entries ──────────────────────────────────────────
+    // Use a lambda so every early-return path cleans up staging.
+    auto fail = [&](const std::string& msg) -> PackStats {
+        Logger::error(msg);
+        path_utils::rm_dir_recursive(staging);
+        stats.exit_code = 1;
+        return stats;
+    };
+
     while (true) {
-        // Peek at how many bytes remain; if <= sizeof(uint32_t) it's the footer
         std::streampos cur = ifs.tellg();
         ifs.seekg(0, std::ios::end);
         std::streampos end = ifs.tellg();
         ifs.seekg(cur);
         std::streamoff remaining = end - cur;
         if (remaining <= static_cast<std::streamoff>(sizeof(uint32_t))) {
-            // Footer checksum — we're done
-            break;
+            break;  // Footer checksum — done.
         }
 
         EntryHeader ehdr{};
         ifs.read(reinterpret_cast<char*>(&ehdr), sizeof(ehdr));
-        if (ifs.gcount() == 0) break;  // EOF
+        if (ifs.gcount() == 0) break;
         if (static_cast<size_t>(ifs.gcount()) != sizeof(ehdr)) {
-            Logger::error("Truncated entry header.");
-            stats.exit_code = 1;
-            return stats;
+            return fail("Truncated entry header.");
         }
 
-        // Safety: cap name_len to avoid huge allocation
         if (ehdr.name_len == 0 || ehdr.name_len > 4096) {
-            Logger::error("Corrupt entry: invalid name_len=" +
-                          std::to_string(ehdr.name_len));
-            stats.exit_code = 1;
-            return stats;
+            return fail("Corrupt entry: invalid name_len=" +
+                        std::to_string(ehdr.name_len));
         }
 
         // Read name
@@ -123,9 +164,7 @@ PackStats unpack(const UnpackOptions& opts) {
         try {
             read_checked(ifs, rel_name.data(), ehdr.name_len, "entry name");
         } catch (const std::exception& e) {
-            Logger::error(e.what());
-            stats.exit_code = 1;
-            return stats;
+            return fail(e.what());
         }
 
         // Security: prevent path traversal
@@ -135,9 +174,13 @@ PackStats unpack(const UnpackOptions& opts) {
             continue;
         }
 
-        std::string dst_path = path_utils::join(norm_dst, rel_name);
-        // Ensure parent dir exists
-        path_utils::mkdir_p(path_utils::parent_dir(dst_path));
+        std::string dst_path = path_utils::join(norm_staging, rel_name);
+
+        // Ensure parent dir exists (before writing the entry itself)
+        std::string parent = path_utils::parent_dir(dst_path);
+        if (!path_utils::mkdir_p(parent)) {
+            return fail("Cannot create parent directory for: " + rel_name);
+        }
 
         // Read payload
         std::vector<uint8_t> payload(ehdr.data_len);
@@ -145,9 +188,7 @@ PackStats unpack(const UnpackOptions& opts) {
             try {
                 read_checked(ifs, payload.data(), ehdr.data_len, rel_name);
             } catch (const std::exception& e) {
-                Logger::error(e.what());
-                stats.exit_code = 1;
-                return stats;
+                return fail(e.what());
             }
         }
 
@@ -160,10 +201,8 @@ PackStats unpack(const UnpackOptions& opts) {
                     decrypted = crypto::decrypt(
                         cipher, opts.password, payload.data(), payload.size());
                 } catch (const std::exception& e) {
-                    Logger::error("Decrypt failed for " + rel_name + ": "
-                                  + e.what() + " (wrong password?)");
-                    stats.exit_code = 1;
-                    return stats;
+                    return fail("Decrypt failed for " + rel_name + ": "
+                                + e.what() + " (wrong password?)");
                 }
             } else {
                 decrypted = std::move(payload);
@@ -184,10 +223,15 @@ PackStats unpack(const UnpackOptions& opts) {
             }
         }
 
-        // Restore by type
+        // ── Restore by type ──────────────────────────────────
+        bool entry_ok = true;
+
         switch (ehdr.type) {
             case EntryType::DIRECTORY:
-                path_utils::mkdir_p(dst_path);
+                if (!path_utils::mkdir_p(dst_path)) {
+                    Logger::warn("Cannot create directory: " + dst_path);
+                    entry_ok = false;
+                }
                 break;
 
             case EntryType::REGULAR: {
@@ -196,48 +240,74 @@ PackStats unpack(const UnpackOptions& opts) {
                                   ehdr.mode & 07777));
                 if (!fd.valid()) {
                     Logger::warn("Cannot create: " + dst_path);
-                    stats.entries++;
-                    continue;
+                    entry_ok = false;
+                } else if (!final_data.empty()) {
+                    ssize_t written_total = 0;
+                    size_t to_write = final_data.size();
+                    while (written_total < static_cast<ssize_t>(to_write)) {
+                        ssize_t w = write(fd.get(),
+                                          final_data.data() + written_total,
+                                          to_write - written_total);
+                        if (w <= 0) {
+                            Logger::error("Write failed for " + dst_path
+                                          + ": " + strerror(errno));
+                            entry_ok = false;
+                            break;
+                        }
+                        written_total += w;
+                    }
+                    if (entry_ok) {
+                        stats.bytes_out += written_total;
+                    }
                 }
-                if (!final_data.empty()) {
-                    write(fd.get(), final_data.data(), final_data.size());
-                }
-                stats.bytes_out += final_data.size();
                 break;
             }
 
             case EntryType::SYMLINK: {
                 std::string target(final_data.begin(), final_data.end());
-                symlink(target.c_str(), dst_path.c_str());
+                if (symlink(target.c_str(), dst_path.c_str()) != 0) {
+                    Logger::warn("symlink failed: " + dst_path
+                                 + " -> " + target + ": " + strerror(errno));
+                    entry_ok = false;
+                }
                 break;
             }
 
             case EntryType::FIFO:
-                mkfifo(dst_path.c_str(), ehdr.mode & 07777);
+                if (mkfifo(dst_path.c_str(), ehdr.mode & 07777) != 0) {
+                    Logger::warn("mkfifo failed: " + dst_path
+                                 + ": " + strerror(errno));
+                    entry_ok = false;
+                }
                 break;
 
             case EntryType::CHR_DEV:
             case EntryType::BLK_DEV: {
                 dev_t dev_num = makedev(ehdr.dev_major, ehdr.dev_minor);
-                mknod(dst_path.c_str(), ehdr.mode, dev_num);
+                if (mknod(dst_path.c_str(), ehdr.mode, dev_num) != 0) {
+                    Logger::warn("mknod failed: " + dst_path
+                                 + ": " + strerror(errno));
+                    entry_ok = false;
+                }
                 break;
             }
 
             case EntryType::HARDLINK: {
-                // payload is the rel_path of the link target
                 std::string target_rel(final_data.begin(), final_data.end());
-                std::string target_path = path_utils::join(norm_dst, target_rel);
+                std::string target_path = path_utils::join(norm_staging,
+                                                           target_rel);
                 if (link(target_path.c_str(), dst_path.c_str()) != 0) {
                     Logger::warn("hard link failed: " + dst_path
                                  + " -> " + target_path
                                  + ": " + strerror(errno));
+                    entry_ok = false;
                 }
                 break;
             }
         }
 
-        // Restore metadata (uid/gid/mode/timestamps)
-        if (ehdr.type != EntryType::SYMLINK) {
+        // ── Restore metadata ─────────────────────────────────
+        if (entry_ok && ehdr.type != EntryType::SYMLINK) {
             chown(dst_path.c_str(), ehdr.uid, ehdr.gid);
             chmod(dst_path.c_str(), ehdr.mode & 07777);
 
@@ -247,12 +317,38 @@ PackStats unpack(const UnpackOptions& opts) {
             times[1].tv_sec  = ehdr.mtime_sec;
             times[1].tv_nsec = ehdr.mtime_nsec;
             utimensat(AT_FDCWD, dst_path.c_str(), times, 0);
-        } else {
+        } else if (entry_ok && ehdr.type == EntryType::SYMLINK) {
             lchown(dst_path.c_str(), ehdr.uid, ehdr.gid);
         }
 
-        stats.entries++;
-        Logger::info("Unpacked: " + rel_name);
+        if (entry_ok) {
+            stats.entries++;
+            Logger::info("Unpacked: " + rel_name);
+        }
+    }
+
+    // ── Finalise: rename staging → dest ─────────────────────────
+    if (path_utils::exists(opts.dest)) {
+        // dest is an existing (empty or warned-about) directory.
+        // Try rmdir first — it only succeeds when empty, which is
+        // the expected case after our pre-check warning.
+        rmdir(opts.dest.c_str());
+        if (path_utils::exists(opts.dest)) {
+            // Non-empty — cannot atomically replace.  Report error
+            // but leave staging intact for manual recovery.
+            Logger::error("Cannot replace non-empty dest: " + opts.dest
+                          + " — staged content is at: " + staging);
+            stats.exit_code = 1;
+            return stats;
+        }
+    }
+
+    if (rename(staging.c_str(), opts.dest.c_str()) != 0) {
+        Logger::error("Cannot rename staging to dest: " + opts.dest
+                      + " (" + strerror(errno)
+                      + ") — staged content is at: " + staging);
+        stats.exit_code = 1;
+        return stats;
     }
 
     printf("[DONE] Unpack complete: %lu entries, %.2f MB\n",

@@ -6,6 +6,9 @@
 #include <vector>
 #include <sstream>
 #include <cerrno>
+#include <unistd.h>
+#include <dirent.h>
+#include <stack>
 
 namespace cbackup {
 namespace path_utils {
@@ -85,6 +88,58 @@ bool validate_path(const std::string& path) {
     if (path.empty() || path.size() > PATH_MAX) return false;
     if (path.find('\0') != std::string::npos) return false;
     return true;
+}
+
+bool rm_dir_recursive(const std::string& path) {
+    if (path.empty() || path == "/" || path == "." || path == "..")
+        return false;  // safety: refuse to delete root / current dir
+
+    struct stat st;
+    if (lstat(path.c_str(), &st) != 0) return false;
+    if (!S_ISDIR(st.st_mode)) {
+        // Not a directory — just unlink
+        return unlink(path.c_str()) == 0;
+    }
+
+    // Iterative DFS: collect all entries then delete bottom-up.
+    using DirEntry = std::pair<std::string, bool>;  // (path, is_dir)
+    std::vector<DirEntry> entries;
+    std::stack<std::string> dirs;
+    dirs.push(path);
+
+    while (!dirs.empty()) {
+        std::string dir = dirs.top();
+        dirs.pop();
+        entries.push_back({dir, true});
+
+        DIR* dp = opendir(dir.c_str());
+        if (!dp) continue;
+        struct dirent* ent;
+        while ((ent = readdir(dp)) != nullptr) {
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+                continue;
+            std::string full = join(dir, ent->d_name);
+            struct stat child_st;
+            if (lstat(full.c_str(), &child_st) != 0) continue;
+            if (S_ISDIR(child_st.st_mode)) {
+                dirs.push(full);
+            } else {
+                entries.push_back({full, false});
+            }
+        }
+        closedir(dp);
+    }
+
+    // Delete in reverse order (children before parents).
+    bool ok = true;
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+        if (it->second) {
+            if (rmdir(it->first.c_str()) != 0) ok = false;
+        } else {
+            if (unlink(it->first.c_str()) != 0) ok = false;
+        }
+    }
+    return ok;
 }
 
 }  // namespace path_utils

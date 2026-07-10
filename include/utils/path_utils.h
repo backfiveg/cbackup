@@ -26,6 +26,10 @@ std::string relative_to(const std::string& base, const std::string& full);
 // Create directories recursively (like mkdir -p)
 bool mkdir_p(const std::string& path);
 
+// Remove a directory and all its contents recursively.
+// Returns false if path doesn't exist or removal fails.
+bool rm_dir_recursive(const std::string& path);
+
 // Validate path: no null bytes, reasonable length
 bool validate_path(const std::string& path);
 
