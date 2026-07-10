@@ -10,9 +10,11 @@
     #terminal::-webkit-scrollbar { width: 8px; }
     #terminal::-webkit-scrollbar-thumb { background: #16a34a; border-radius: 4px; }
     .glow { text-shadow: 0 0 6px rgba(34,197,94,.6); }
+    .req::after { content: " *"; color: #f87171; font-size: 10px; }
   </style>
 </head>
-<body class="bg-zinc-950 text-zinc-200 min-h-screen">
+<body class="bg-zinc-950 text-zinc-200 min-h-screen"
+      onkeydown="if(event.key==='Enter' && !$('run').disabled) $('run').click()">
   <div class="max-w-7xl mx-auto p-4 md:p-6">
     <!-- Header -->
     <header class="flex items-center justify-between border-b border-zinc-800 pb-3 mb-5">
@@ -34,34 +36,35 @@
           </select>
         </div>
 
+        <!-- Path fields — visibility controlled by layout[] -->
         <div class="grid grid-cols-2 gap-3">
           <div data-role="source">
-            <label class="block text-xs text-zinc-400 mb-1">源目录 --source</label>
-            <input id="source" placeholder="/data/src" class="inp" />
+            <label class="block text-xs text-zinc-400 mb-1 req">源目录 --source</label>
+            <input id="source" placeholder="/data/project" class="inp" />
           </div>
           <div data-role="dest">
-            <label class="block text-xs text-zinc-400 mb-1">目标 --dest</label>
+            <label class="block text-xs text-zinc-400 mb-1 req">目标 --dest</label>
             <input id="dest" placeholder="/backup/location" class="inp" />
           </div>
           <div data-role="file" class="hidden">
-            <label class="block text-xs text-zinc-400 mb-1">归档文件 --file</label>
+            <label class="block text-xs text-zinc-400 mb-1 req">归档文件 --file</label>
             <input id="file" placeholder="/data/archive.cbk" class="inp" />
           </div>
           <div data-role="schedule" class="hidden">
             <label class="block text-xs text-zinc-400 mb-1">计划 --schedule</label>
-            <input id="schedule" placeholder="0 2 * * *" class="inp" />
+            <input id="schedule" placeholder="*/5 * * * *" class="inp" />
           </div>
           <div data-role="keep" class="hidden">
             <label class="block text-xs text-zinc-400 mb-1">保留份数 --keep</label>
-            <input id="keep" type="number" placeholder="5" class="inp" />
+            <input id="keep" type="number" placeholder="5" min="0" class="inp" />
           </div>
         </div>
 
-        <!-- Algorithm selection -->
-        <fieldset class="border border-zinc-800 rounded p-3">
+        <!-- Algorithm selection — only for pack / cron / unpack(password) -->
+        <fieldset id="algo-group" class="border border-zinc-800 rounded p-3">
           <legend class="text-xs text-green-400 px-1">算法组合</legend>
           <div class="grid grid-cols-2 gap-3">
-            <div>
+            <div data-algo-role="compress">
               <label class="block text-xs text-zinc-400 mb-1">压缩 --compress</label>
               <select id="compress" class="inp">
                 <option value="">不压缩</option>
@@ -69,7 +72,7 @@
                 <option value="zlib">zlib (第三方库)</option>
               </select>
             </div>
-            <div>
+            <div data-algo-role="encrypt">
               <label class="block text-xs text-zinc-400 mb-1">加密 --encrypt</label>
               <select id="encrypt" class="inp">
                 <option value="">不加密</option>
@@ -77,15 +80,15 @@
                 <option value="aes">aes-128 (OpenSSL)</option>
               </select>
             </div>
-            <div class="col-span-2">
+            <div data-algo-role="password" class="col-span-2">
               <label class="block text-xs text-zinc-400 mb-1">密钥 -p / --password</label>
-              <input id="password" type="password" placeholder="secret123" class="inp" />
+              <input id="password" type="password" placeholder="••••••••" class="inp" />
             </div>
           </div>
         </fieldset>
 
-        <!-- 6-dimension filters -->
-        <fieldset class="border border-zinc-800 rounded p-3">
+        <!-- 6-dimension filters — only for pack / cron -->
+        <fieldset id="filter-group" class="border border-zinc-800 rounded p-3">
           <legend class="text-xs text-green-400 px-1">自定义过滤 (6 维)</legend>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -125,10 +128,12 @@
         </div>
 
         <div class="flex gap-3">
-          <button id="run" class="flex-1 bg-green-600 hover:bg-green-500 text-black font-bold py-2 rounded transition">▶ 执行</button>
+          <button id="run" class="flex-1 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-black font-bold py-2 rounded transition">▶ 执行</button>
           <button id="stop" class="bg-zinc-800 hover:bg-red-600 text-zinc-200 px-4 py-2 rounded transition">■ 停止</button>
-          <button id="clear" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded transition">清屏</button>
+          <button id="reset" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded transition" title="清空所有表单字段">↺ 重置</button>
+          <button id="clear" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded transition" title="清空终端输出">清屏</button>
         </div>
+        <p class="text-xs text-zinc-600 mt-1">提示：按 <kbd class="bg-zinc-800 px-1 rounded">Enter</kbd> 执行 &nbsp;|&nbsp; 带 <span class="text-red-400">*</span> 为必填项 &nbsp;|&nbsp; 密码在操作完成后自动清除</p>
       </section>
 
       <!-- Right: live terminal -->
@@ -137,7 +142,7 @@
           <span class="w-3 h-3 rounded-full bg-red-500"></span>
           <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
           <span class="w-3 h-3 rounded-full bg-green-500"></span>
-          <span class="text-xs text-zinc-500 ml-2">cbackup — live output</span>
+          <span id="term-title" class="text-xs text-zinc-500 ml-2">cbackup — live output</span>
         </div>
         <pre id="terminal" class="flex-1 overflow-auto p-3 text-sm text-green-400 leading-relaxed" style="min-height: 520px; max-height: 70vh;"></pre>
       </section>
@@ -153,8 +158,9 @@
     const $ = (id) => document.getElementById(id);
     const term = $('terminal');
     let es = null;
+    let runTimer = null;
 
-    // Fields visible per subcommand.
+    // ── Layout: which path fields are visible per subcommand ─────
     const layout = {
       pack:    ['source','dest'],
       unpack:  ['file','dest'],
@@ -163,24 +169,62 @@
       cron:    ['source','dest','schedule','keep'],
     };
 
+    // Subcommands that need algorithm / filter panels.
+    function algoVisible(sub)  { return sub === 'pack' || sub === 'cron'; }
+    function passVisible(sub) { return sub === 'pack' || sub === 'cron' || sub === 'unpack'; }
+
+    // ── applyLayout: show/hide fields, clear hidden ones ─────────
     function applyLayout() {
       const sub = $('subcmd').value;
       const show = new Set(layout[sub] || []);
+
+      // Path fields
       document.querySelectorAll('[data-role]').forEach(el => {
         const role = el.dataset.role;
         const shouldShow = show.has(role);
         el.classList.toggle('hidden', !shouldShow);
-        // Clear fields that are hidden so stale values from a previous
-        // subcommand are not sent to the backend.
         if (!shouldShow) {
-          const input = el.querySelector('input');
-          if (input) input.value = '';
+          const inp = el.querySelector('input');
+          if (inp) inp.value = '';
         }
       });
+
+      // Algorithm group: compress + encrypt only for pack/cron;
+      // password also for unpack.
+      $('algo-group').classList.toggle('hidden', !algoVisible(sub) && !passVisible(sub));
+      const compressEl = document.querySelector('[data-algo-role="compress"]');
+      const encryptEl  = document.querySelector('[data-algo-role="encrypt"]');
+      const passEl     = document.querySelector('[data-algo-role="password"]');
+      if (compressEl) compressEl.classList.toggle('hidden', !algoVisible(sub));
+      if (encryptEl)  encryptEl.classList.toggle('hidden', !algoVisible(sub));
+      if (passEl)     passEl.classList.toggle('hidden', !passVisible(sub));
+
+      // Filter group — only pack / cron.
+      $('filter-group').classList.toggle('hidden', !algoVisible(sub));
+      if (!algoVisible(sub)) resetFilterFields();
+
+      // Dynamic dest placeholder.
+      const destPlaceholders = {
+        pack:    '/backup/project.cbk',
+        unpack:  '/restore/location',
+        backup:  '/backup/location',
+        restore: '/restore/location',
+        cron:    '/backup/location',
+      };
+      $('dest').placeholder = destPlaceholders[sub] || '/backup/location';
+
+      // Clear password on every subcommand switch (security).
+      $('password').value = '';
     }
+
+    function resetFilterFields() {
+      ['include','exclude','type','mtime','size','owner'].forEach(id => { $(id).value = ''; });
+    }
+
     $('subcmd').addEventListener('change', applyLayout);
     applyLayout();
 
+    // ── Terminal helpers ─────────────────────────────────────────
     function setStatus(text, cls) {
       const s = $('status');
       s.textContent = text;
@@ -195,18 +239,15 @@
       term.scrollTop = term.scrollHeight;
     }
 
+    // ── buildQuery: only send relevant fields ────────────────────
     function buildQuery() {
       const sub = $('subcmd').value;
-      // Only send fields that are relevant to the current subcommand.
-      // Layout fields (source/dest/file/schedule/keep) come from the
-      // subcommand-specific layout; algorithm + filter fields are
-      // only meaningful for pack and cron.
       const packScoped = (sub === 'pack' || sub === 'cron');
       const alwaysKeys = ['subcmd'];
       const layoutKeys = (layout[sub] || []);
-      const algoKeys = packScoped ? ['compress','encrypt','password'] : [];
-      // For unpack, password is still needed (decryption).
-      if (sub === 'unpack') algoKeys.push('password');
+      const algoKeys = [];
+      if (packScoped) algoKeys.push('compress', 'encrypt');
+      if (packScoped || sub === 'unpack') algoKeys.push('password');
       const filterKeys = packScoped ? ['include','exclude','type','mtime','size','owner'] : [];
       const keys = [...alwaysKeys, ...layoutKeys, ...algoKeys, ...filterKeys];
 
@@ -217,9 +258,39 @@
       return p.toString();
     }
 
+    // ── Set UI into "running" state ──────────────────────────────
+    function setRunning(active) {
+      const runBtn = $('run');
+      const stopBtn = $('stop');
+      if (active) {
+        runBtn.disabled = true;
+        runBtn.textContent = '⏳ 执行中...';
+        runBtn.className = 'flex-1 bg-zinc-700 text-zinc-500 font-bold py-2 rounded transition cursor-not-allowed';
+        stopBtn.classList.remove('bg-zinc-800');
+        stopBtn.classList.add('bg-red-700', 'hover:bg-red-600');
+        // Elapsed timer
+        const start = Date.now();
+        runTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - start) / 1000);
+          $('term-title').textContent = 'cbackup — 运行中 (' + elapsed + 's)';
+        }, 1000);
+      } else {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ 执行';
+        runBtn.className = 'flex-1 bg-green-600 hover:bg-green-500 text-black font-bold py-2 rounded transition';
+        stopBtn.classList.remove('bg-red-700', 'hover:bg-red-600');
+        stopBtn.classList.add('bg-zinc-800');
+        if (runTimer) { clearInterval(runTimer); runTimer = null; }
+        $('term-title').textContent = 'cbackup — live output';
+      }
+    }
+
+    // ── Run / Stop / Reset / Clear ───────────────────────────────
     $('run').addEventListener('click', () => {
       if (es) es.close();
+      setRunning(true);
       setStatus('RUNNING', 'bg-green-900 text-green-300 animate-pulse');
+
       es = new EventSource('/stream?' + buildQuery());
 
       es.addEventListener('cmd', (e) => println('$ ' + JSON.parse(e.data), '#a1a1aa'));
@@ -233,17 +304,41 @@
         setStatus(code === '0' ? 'DONE' : 'FAILED',
                   code === '0' ? 'bg-zinc-800 text-green-400' : 'bg-red-900 text-red-300');
         es.close(); es = null;
+        setRunning(false);
+        // Always clear password after execution (security).
+        $('password').value = '';
       });
     });
 
     $('stop').addEventListener('click', () => {
       if (es) { es.close(); es = null; }
+      setRunning(false);
       setStatus('STOPPED', 'bg-zinc-800 text-zinc-400');
+      // Clear password even on manual stop.
+      $('password').value = '';
     });
 
+    // Reset: clear ALL form fields (not terminal).
+    $('reset').addEventListener('click', () => {
+      // Path fields
+      ['source','dest','file','schedule','keep'].forEach(id => { $(id).value = ''; });
+      // Algo fields
+      $('compress').selectedIndex = 0;
+      $('encrypt').selectedIndex = 0;
+      $('password').value = '';
+      // Filters
+      resetFilterFields();
+      // Checkboxes
+      $('metadata').checked = false;
+      $('verbose').checked = false;
+      println('[FORM] 表单已重置', '#6b7280');
+    });
+
+    // Clear: only the terminal.
     $('clear').addEventListener('click', () => { term.innerHTML = ''; });
 
-    println('cbackup web console ready. 配置左侧参数后点击「执行」。', '#6b7280');
+    // ── Welcome ──────────────────────────────────────────────────
+    println('cbackup web console ready.  配置参数后点击「执行」或按 Enter。', '#6b7280');
   </script>
 </body>
 </html>
