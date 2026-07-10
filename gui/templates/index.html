@@ -41,7 +41,7 @@
           </div>
           <div data-role="dest">
             <label class="block text-xs text-zinc-400 mb-1">目标 --dest</label>
-            <input id="dest" placeholder="/data/archive.cbk" class="inp" />
+            <input id="dest" placeholder="/backup/location" class="inp" />
           </div>
           <div data-role="file" class="hidden">
             <label class="block text-xs text-zinc-400 mb-1">归档文件 --file</label>
@@ -167,7 +167,15 @@
       const sub = $('subcmd').value;
       const show = new Set(layout[sub] || []);
       document.querySelectorAll('[data-role]').forEach(el => {
-        el.classList.toggle('hidden', !show.has(el.dataset.role));
+        const role = el.dataset.role;
+        const shouldShow = show.has(role);
+        el.classList.toggle('hidden', !shouldShow);
+        // Clear fields that are hidden so stale values from a previous
+        // subcommand are not sent to the backend.
+        if (!shouldShow) {
+          const input = el.querySelector('input');
+          if (input) input.value = '';
+        }
       });
     }
     $('subcmd').addEventListener('change', applyLayout);
@@ -188,9 +196,20 @@
     }
 
     function buildQuery() {
-      const keys = ['subcmd','source','dest','file','schedule','keep',
-                    'compress','encrypt','password','include','exclude',
-                    'type','mtime','size','owner'];
+      const sub = $('subcmd').value;
+      // Only send fields that are relevant to the current subcommand.
+      // Layout fields (source/dest/file/schedule/keep) come from the
+      // subcommand-specific layout; algorithm + filter fields are
+      // only meaningful for pack and cron.
+      const packScoped = (sub === 'pack' || sub === 'cron');
+      const alwaysKeys = ['subcmd'];
+      const layoutKeys = (layout[sub] || []);
+      const algoKeys = packScoped ? ['compress','encrypt','password'] : [];
+      // For unpack, password is still needed (decryption).
+      if (sub === 'unpack') algoKeys.push('password');
+      const filterKeys = packScoped ? ['include','exclude','type','mtime','size','owner'] : [];
+      const keys = [...alwaysKeys, ...layoutKeys, ...algoKeys, ...filterKeys];
+
       const p = new URLSearchParams();
       keys.forEach(k => { const v = $(k) ? $(k).value : ''; if (v) p.set(k, v); });
       if ($('metadata').checked) p.set('metadata', '1');
